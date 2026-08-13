@@ -31,7 +31,8 @@ GAME_HEADERS = {
     "Accept-Encoding": "gzip",
 }
 
-TARGET_URL = "https://clientbp.ggpolarbear.com/Follow"
+FOLLOW_URL = "https://clientbp.ggpolarbear.com/Follow"
+UNFOLLOW_URL = "https://clientbp.ggpolarbear.com/Unfollow"
 JWT_API = "https://freefiremax.pages.dev/GenJwt/token?key=raigenff&uid={uid}&password={password}"
 
 def enc(d):
@@ -68,7 +69,11 @@ def get_jwt(uid, password):
         pass
     return None
 
-def process_follow(account, target_uid):
+def process_action(account, target_uid, target_url):
+    """
+    Proses follow atau unfollow untuk satu akun.
+    target_url = FOLLOW_URL atau UNFOLLOW_URL
+    """
     uid = str(account.get("uid", "")).strip()
     password = account.get("password", "").strip()
 
@@ -86,7 +91,7 @@ def process_follow(account, target_uid):
     try:
         binary_payload = smart_encode(payload_dict)
         encrypted_req = enc(binary_payload)
-        r = requests.post(TARGET_URL, headers=headers, data=encrypted_req, timeout=15, verify=False)
+        r = requests.post(target_url, headers=headers, data=encrypted_req, timeout=15, verify=False)
 
         if r.status_code == 200:
             is_success = True
@@ -152,12 +157,17 @@ def load_accounts_from_file():
 def follow_endpoint():
     uid = request.args.get('uid')
     jumlahfollow_str = request.args.get('jumlahfollow')
+    unfollow_param = request.args.get('unfollow', 'false').lower()
 
     if not uid:
         return jsonify({"error": "Missing uid parameter"}), 400
     if not uid.isdigit():
         return jsonify({"error": "uid must be numeric"}), 400
     target_uid = int(uid)
+
+    # Tentukan aksi: follow atau unfollow
+    is_unfollow = unfollow_param in ('true', '1', 'yes')
+    target_url = UNFOLLOW_URL if is_unfollow else FOLLOW_URL
 
     # Jumlah akun yang akan digunakan
     if jumlahfollow_str:
@@ -178,7 +188,7 @@ def follow_endpoint():
     # Batasi sesuai jumlahfollow
     if jumlahfollow is not None:
         if jumlahfollow > len(accounts):
-            jumlahfollow = len(accounts)  # ambil semua jika lebih
+            jumlahfollow = len(accounts)
         accounts = accounts[:jumlahfollow]
 
     total = len(accounts)
@@ -187,7 +197,7 @@ def follow_endpoint():
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_account = {
-            executor.submit(process_follow, acc, target_uid): acc
+            executor.submit(process_action, acc, target_uid, target_url): acc
             for acc in accounts
         }
         for future in concurrent.futures.as_completed(future_to_account):
@@ -207,6 +217,7 @@ def follow_endpoint():
 
     return jsonify({
         "target_uid": target_uid,
+        "action": "unfollow" if is_unfollow else "follow",
         "total": total,
         "success": success_count,
         "failed": failed_count,
