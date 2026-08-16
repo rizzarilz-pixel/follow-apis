@@ -260,7 +260,7 @@ HTML_TEMPLATE = '''
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             padding: 40px;
-            max-width: 600px;
+            max-width: 650px;
             width: 100%;
         }
         h1 {
@@ -297,6 +297,22 @@ HTML_TEMPLATE = '''
         input:focus, select:focus {
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .radio-group {
+            display: flex;
+            gap: 20px;
+            padding: 10px 0;
+        }
+        .radio-group label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: normal;
+            cursor: pointer;
+        }
+        .radio-group input[type="radio"] {
+            width: auto;
+            cursor: pointer;
         }
         .btn-group {
             display: flex;
@@ -445,6 +461,14 @@ HTML_TEMPLATE = '''
             display: block;
             margin-bottom: 5px;
         }
+        .account-info {
+            background: #f0f0f0;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-top: 5px;
+            font-size: 12px;
+            color: #555;
+        }
     </style>
 </head>
 <body>
@@ -459,8 +483,21 @@ HTML_TEMPLATE = '''
             </div>
             
             <div class="form-group">
-                <label>Jumlah Akun Bot</label>
-                <input type="number" id="jumlahFollow" placeholder="Kosongkan untuk semua akun" min="1">
+                <label>Mode Jumlah Akun Bot</label>
+                <div class="radio-group">
+                    <label>
+                        <input type="radio" name="mode" value="manual" checked onchange="toggleJumlahInput()">
+                        Manual
+                    </label>
+                    <label>
+                        <input type="radio" name="mode" value="all" onchange="toggleJumlahInput()">
+                        Semua Akun
+                    </label>
+                </div>
+                <div id="manualInput">
+                    <input type="number" id="jumlahFollow" placeholder="Masukkan jumlah akun" min="1">
+                </div>
+                <div class="account-info" id="accountInfo">Loading akun...</div>
             </div>
             
             <div class="btn-group">
@@ -516,15 +553,49 @@ HTML_TEMPLATE = '''
     <script>
         let isProcessing = false;
         let autoActive = false;
+        let totalAccounts = 0;
+        
+        // Load total accounts
+        async function loadAccountInfo() {
+            try {
+                const response = await fetch('/api/account-count');
+                const data = await response.json();
+                totalAccounts = data.total || 0;
+                document.getElementById('accountInfo').textContent = 
+                    `Total akun tersedia: ${totalAccounts} akun`;
+            } catch (error) {
+                document.getElementById('accountInfo').textContent = 'Gagal load akun';
+            }
+        }
+        loadAccountInfo();
+        
+        function toggleJumlahInput() {
+            const mode = document.querySelector('input[name="mode"]:checked').value;
+            const manualInput = document.getElementById('manualInput');
+            if (mode === 'all') {
+                manualInput.style.display = 'none';
+            } else {
+                manualInput.style.display = 'block';
+            }
+        }
         
         async function executeAction(action) {
             if (isProcessing) return;
             
             const uid = document.getElementById('targetUid').value.trim();
-            const jumlah = document.getElementById('jumlahFollow').value.trim();
+            const mode = document.querySelector('input[name="mode"]:checked').value;
+            let jumlah = document.getElementById('jumlahFollow').value.trim();
             
             if (!uid || !/^\\d+$/.test(uid)) {
                 alert('Masukkan UID yang valid (angka saja)');
+                return;
+            }
+            
+            // Jika mode all, set jumlah = 0 (akan dihandle di backend)
+            if (mode === 'all') {
+                jumlah = '0';
+            } else if (!jumlah) {
+                alert('Masukkan jumlah akun atau pilih mode "Semua Akun"');
                 return;
             }
             
@@ -659,22 +730,22 @@ def follow_endpoint():
     is_unfollow = unfollow_param in ('true', '1', 'yes')
     target_url = UNFOLLOW_URL if is_unfollow else FOLLOW_URL
 
-    if jumlahfollow_str:
-        if not jumlahfollow_str.isdigit():
-            return jsonify({"error": "jumlahfollow must be numeric"}), 400
-        jumlahfollow = int(jumlahfollow_str)
-        if jumlahfollow <= 0:
-            return jsonify({"error": "jumlahfollow must be positive"}), 400
-    else:
-        jumlahfollow = None
-
     accounts = load_accounts_from_file()
     if accounts is None:
         return jsonify({"error": "accounts.txt not found"}), 500
     if not accounts:
         return jsonify({"error": "No valid accounts in accounts.txt"}), 400
 
-    if jumlahfollow is not None:
+    # Mode: jika jumlahfollow_str = "0" atau kosong, gunakan semua akun
+    if jumlahfollow_str is None or jumlahfollow_str == "0":
+        # Mode ALL - gunakan semua akun
+        jumlahfollow = len(accounts)
+    else:
+        if not jumlahfollow_str.isdigit():
+            return jsonify({"error": "jumlahfollow must be numeric"}), 400
+        jumlahfollow = int(jumlahfollow_str)
+        if jumlahfollow <= 0:
+            return jsonify({"error": "jumlahfollow must be positive"}), 400
         if jumlahfollow > len(accounts):
             jumlahfollow = len(accounts)
         accounts = accounts[:jumlahfollow]
@@ -711,6 +782,14 @@ def follow_endpoint():
         "failed": failed_count,
         "results": results
     })
+
+# ─── GET TOTAL ACCOUNTS ───
+@app.route('/api/account-count', methods=['GET'])
+def account_count():
+    accounts = load_accounts_from_file()
+    if accounts is None:
+        return jsonify({"total": 0, "error": "accounts.txt not found"}), 500
+    return jsonify({"total": len(accounts)})
 
 # ─── AUTO UNFOLLOW ENDPOINTS ───
 @app.route('/api/auto-unfollow/start', methods=['POST'])
